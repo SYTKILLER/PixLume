@@ -1,0 +1,157 @@
+name: HarmonyOS App Build
+
+# ========== ⚠️ 当前已停用 ==========
+# 本文件已改名为 master.yml.disabled（GitHub 不会执行），当前采用「本地打包 + 手动发布 Release」。
+# 重新启用方法：改回 master.yml，并按下方 TODO 完成工具链自托管（compatibleSdkVersion 6.1.1(24)
+# 需要 SDK 6.1.1，公开镜像最高只有 6.1.0，必须从华为官方下载中心获取 6.1.1 后上传到自己的 Release）。
+
+# ========== 工具链配置 ==========
+# 命令行工具版本必须 >= 工程 compatibleSdkVersion（当前 build-profile.json5 为 6.1.1(24)）。
+# 6.1.1 版本没有公开镜像，需从华为官方下载中心获取 Linux 版后上传到本仓库的 GitHub Release，
+# 然后替换下方 CLT_URL。上传注意：GitHub Release 单文件上限 2GiB，超出需分卷并调整下载/合并步骤。
+# 官方下载地址：https://developer.huawei.com/consumer/cn/download/ -> Command Line Tools (Linux)
+env:
+  CLT_VERSION: 6.1.0.816 # TODO: 替换为 6.1.1.x，否则无法编译 compatibleSdkVersion 6.1.1(24)
+  CLT_URL: https://github.com/Okysu/harmony-auto-build/releases/download/commandline-tools-linux-x64-6.1.0.816/commandline-tools-linux-x64-6.1.0.816.zip # TODO: 替换为自托管的 6.1.1 工具链地址
+
+# ========== 触发条件：推 tag 或手动触发 ==========
+on:
+  push:
+    tags:
+      - "v*"   # 推 tag 时自动触发（如 v1.0.0）
+  workflow_dispatch:  # 手动触发
+    inputs:
+      tag:
+        description: '发布版本号（如 v1.0.1），留空则只构建不发布'
+        required: false
+        default: ''
+
+# ========== 构建作业 ==========
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 拉代码
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # 2. 安装 Node.js 18
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "18"
+
+      # 3. 缓存鸿蒙命令行工具
+      - name: Cache Command Line Tools
+        id: cache-tools
+        uses: actions/cache@v5
+        with:
+          path: ./command-line-tools
+          key: ${{ runner.os }}-harmony-tools-${{ env.CLT_VERSION }}
+
+      # 4. 下载工具链（如果缓存未命中）
+      - name: Download Command Line Tools
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        run: |
+          echo "Cache miss, downloading tools..."
+          curl -L -o tools.zip "$CLT_URL"
+          unzip tools.zip
+          rm tools.zip
+
+      # 5. 配置构建环境
+      - name: Setup Build Environment
+        run: |
+          TOOLS_DIR=$(pwd)/command-line-tools
+          echo "hwsdk.dir=$TOOLS_DIR/sdk" > local.properties
+          echo "$TOOLS_DIR/bin" >> $GITHUB_PATH
+          echo "OHPM_HOME=$TOOLS_DIR/ohpm" >> $GITHUB_ENV
+          echo "HOS_SDK_HOME=$TOOLS_DIR/sdk" >> $GITHUB_ENV
+          chmod -R +x $TOOLS_DIR/bin
+
+      # 6. 安装依赖（加自动重试）
+      - name: Install Dependencies
+        run: |
+          for i in 1 2 3; do
+            ohpm install && break || echo "ohpm install failed, retrying in 10 seconds... ($i/3)" && sleep 10
+          done
+
+      # 7. 构建 HAP
+      - name: Build HAP (Debug Mode)
+        run: |
+          hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon
+
+      # 8. 上传构建产物
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: harmony-app-debug
+          path: |
+            **/build/**/outputs/**/*.hap
+            **/build/**/outputs/**/*.app
+            **/build/**/outputs/**/*.hsp
+            **/build/**/outputs/**/*.har
+
+  # ========== 发布作业 ==========
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    # 只有存在 tag 时才执行发布
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # 确定要发布的 tag
+      - name: Determine release tag
+        id: release_info
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # 推 tag 触发：用触发的那个 tag
+            TAG="${GITHUB_REF_NAME}"
+          else
+            # 手动触发：用用户输入的 tag
+            TAG="${{ github.event.inputs.tag }}"
+            # 确保 tag 存在，不存在就创建
+            if ! git tag -l "$TAG" | grep -q "$TAG"; then
+              echo "Tag $TAG does not exist, creating it..."
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git tag "$TAG"
+              git push origin "$TAG"
+            fi
+          fi
+          
+          # 去掉 tag 前面的 v 作为 Release 标题
+          VERSION="${TAG#v}"
+          
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Will create release: tag=$TAG, title=$VERSION"
+
+      # 下载构建产物
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: harmony-app-debug
+          path: build-artifacts
+
+      # 创建 GitHub Release
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: ${{ steps.release_info.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: |
+            build-artifacts/**/*.hap
+            build-artifacts/**/*.app
+            build-artifacts/**/*.hsp
+            build-artifacts/**/*.har
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
