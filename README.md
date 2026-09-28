@@ -49,7 +49,7 @@ PixLume 旨在为鸿蒙用户提供原生流畅的插画与小说浏览体验。
   <img src="assets/app_icon_round.png" alt="PixLume Icon" width="120">
 </div>
 
-本项目的应用图标由 **[科蓝](https://github.com/kelanKL)** 设计。
+本项目的应用图标由作者 **[March](https://github.com/SYTKILLER)** 设计。
 
 ## 🛠 技术栈
 
