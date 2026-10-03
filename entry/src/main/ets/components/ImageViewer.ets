@@ -41,16 +41,27 @@ struct ZoomableImage {
   // 平移手势参数用 options 动态管理：构造参数里的状态变量更新不可靠，
   // 放大后 direction 未切到 All 时横滑会穿透到外层 Swiper 导致切作品
   private panOption: PanGestureOptions = new PanGestureOptions({ fingers: 1, direction: PanDirection.Vertical, distance: 5 })
+  // 捏合基准（onActionStart 定格，重触发时重新定格，等效官方 stash 模式）
   private pinchStartScale: number = 1
   private pinchStartOffsetX: number = 0
   private pinchStartOffsetY: number = 0
-  // 双指中心起始屏幕坐标：捏合中整体拖动双指时图片需同步跟随
+  // 捏合起始双指中心（组件中心相对坐标）
   private pinchStartCenterX: number = 0
   private pinchStartCenterY: number = 0
+  // 拖动基准
   private panStartOffsetX: number = 0
   private panStartOffsetY: number = 0
   // 放大态拖动时未 clamp 的目标位移，与实际位移之差即顶边后的溢出量（翻页判定用）
   private panTargetX: number = 0
+  // Parallel 组内仲裁：pinch 接管后 pan 冻结至自身 End，避免双方同时写位移
+  private gestureOwner: string = ''
+  private panSuperseded: boolean = false
+  // 当前落指数（onTouch 计数）：判定回调据此拒绝双指期间的 Pan
+  private touchCount: number = 0
+  // 本触摸序列内 pinch/pan 已成功：抑制其后抬指误触单击
+  private seqHadGesture: boolean = false
+  // 放大态上报门控：捏合中只升不降，手势结束才回落，避免 Swiper 中途重新武装
+  private reportedZoomed: boolean = false
   private singleTapTimer: number = -1
   // 双击成功时刻：count:1 单击手势对双击的第二击也会识别成功，需据此忽略
   private lastDoubleTapTime: number = 0
@@ -77,10 +88,23 @@ struct ZoomableImage {
     return Math.min(max, Math.max(min, v))
   }
 
-  private clampOffset(value: number, axisIsX: boolean): number {
+  private clampOffsetFor(value: number, axisIsX: boolean, scale: number): number {
     const area = axisIsX ? this.areaW : this.areaH
-    const max = Math.max(0, (area * this.imgScale - area) / 2)
+    const max = Math.max(0, (area * scale - area) / 2)
     return this.clampBound(value, -max, max)
+  }
+
+  private clampOffset(value: number, axisIsX: boolean): number {
+    return this.clampOffsetFor(value, axisIsX, this.imgScale)
+  }
+
+  /** 放大态变化上报：同值去重；捏合过程中只升不降 */
+  private reportZoom(zoomed: boolean): void {
+    if (zoomed === this.reportedZoomed) {
+      return
+    }
+    this.reportedZoomed = zoomed
+    this.onZoomChanged(zoomed)
   }
 
   private toggleZoom(tapLocalX?: number, tapLocalY?: number) {
@@ -96,37 +120,62 @@ struct ZoomableImage {
         const fx = (tapLocalX ?? this.areaW / 2) - this.areaW / 2
         const fy = (tapLocalY ?? this.areaH / 2) - this.areaH / 2
         const k = DOUBLE_TAP_SCALE
-        this.offsetX = this.clampOffset(fx * (1 - k), true)
-        this.offsetY = this.clampOffset(fy * (1 - k), false)
+        this.offsetX = this.clampOffsetFor(fx * (1 - k), true, k)
+        this.offsetY = this.clampOffsetFor(fy * (1 - k), false, k)
       }
     })
     this.syncPanDirection()
-    this.onZoomChanged(!zoomed)
+    this.reportZoom(!zoomed)
   }
 
   build() {
-    // 双层变换：ArkUI 图形变换按 translate→scale 固定顺序合成，同层挂载时平移量会被缩放
-    // 放大（视觉位移 = offset × scale）导致不跟手；拆两层让平移保持屏幕坐标 1:1
+    // 三层结构：手势绑定在最外层无变换的全屏宿主上——带 translate 的节点命中区域会随
+    // 平移移动，图片拖出屏幕后触摸点落在其区域外，整棵子树手势全部失灵（放大拖动后
+    // 手势"错乱"的根因）；平移/缩放只作用于内层内容节点
+    // 变换拆两层：ArkUI 图形变换按 translate→scale 固定顺序合成，同层挂载时平移量会被
+    // 缩放（视觉位移 = offset × scale）导致不跟手；拆开让平移保持屏幕坐标 1:1
     Column() {
-      Stack() {
-        PixivImageComponent({
-          imageUrl: this.imageUrl,
-          imageObjectFit: ImageFit.Contain,
-          imageWidth: '100%',
-          imageHeight: '100%',
-          needMask: false
-        })
+      Column() {
+        Stack() {
+          PixivImageComponent({
+            imageUrl: this.imageUrl,
+            imageObjectFit: ImageFit.Contain,
+            imageWidth: '100%',
+            imageHeight: '100%',
+            needMask: false
+          })
+        }
+        .width('100%')
+        .height('100%')
+        .scale({ x: this.imgScale * this.dragScale, y: this.imgScale * this.dragScale })
       }
       .width('100%')
       .height('100%')
-      .scale({ x: this.imgScale * this.dragScale, y: this.imgScale * this.dragScale })
+      .translate({ x: this.offsetX, y: this.offsetY + this.dragY })
     }
     .width('100%')
     .height('100%')
-    .translate({ x: this.offsetX, y: this.offsetY + this.dragY })
     .onAreaChange((_old: Area, newArea: Area) => {
       this.areaW = newArea.width as number
       this.areaH = newArea.height as number
+    })
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        if (this.touchCount === 0) {
+          this.seqHadGesture = false
+        }
+        this.touchCount++
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.touchCount = Math.max(0, this.touchCount - 1)
+      }
+    })
+    // 双指落屏期间拒绝 Pan（官方手势拦截方案）：从识别层面杜绝 Pan 抢跑，捏合可稳定接管
+    .onGestureJudgeBegin((gestureInfo: GestureInfo, event: BaseGestureEvent) => {
+      if (gestureInfo.type === GestureControl.GestureType.PAN_GESTURE &&
+        (this.touchCount >= 2 || event.fingerList.length > 1)) {
+        return GestureJudgeResult.REJECT
+      }
+      return GestureJudgeResult.CONTINUE
     })
     // 单双击并行组（官方单双击冲突方案）：双击优先识别，单击经 TAP_TIMEOUT 延时与双击互斥；
     // 两组独立声明时单击会先识别成功导致双击永远失效
@@ -144,6 +193,10 @@ struct ZoomableImage {
         }),
       TapGesture({ count: 1 })
         .onAction(() => {
+          // 本序列捏合/拖动已成功时抬指不是单击（pan/pinch 成功后 Tap 仍会识别成功）
+          if (this.seqHadGesture) {
+            return
+          }
           // 双击的第二击也会让单击手势成功并重设定时器：落在双击窗口内则忽略，
           // 否则定时器在双击缩放后到期，工具栏被误切换
           if (Date.now() - this.lastDoubleTapTime < TAP_TIMEOUT) {
@@ -158,66 +211,86 @@ struct ZoomableImage {
           }, TAP_TIMEOUT)
         })
     ))
-    // 缩放与拖动互斥组合：捏合声明在前优先识别（官方手势冲突方案），
-    // 避免双指捏合时 Pan 先达触发条件锁死序列导致缩放失灵
-    .gesture(GestureGroup(GestureMode.Exclusive,
-      PinchGesture({ fingers: 2 })
+    // 缩放与拖动并行组 + 手写仲裁（官方 imageviewer 同款拓扑）：Exclusive 会让先达阈值者
+    // 独吞识别导致捏合失灵；并行后由 gestureOwner 决定驱动方，捏合可随时接管拖动
+    .gesture(GestureGroup(GestureMode.Parallel,
+      // distance:1 降低起手死区：双指一张合即达成，稳定先于 Pan/Swiper（官方同款参数）
+      PinchGesture({ fingers: 2, distance: 1 })
         .onActionStart((event: GestureEvent) => {
+          this.seqHadGesture = true
+          this.gestureOwner = 'pinch'
+          this.panSuperseded = true
+          // 接管可能进行中的下拉关闭跟手态
+          if (this.dragY !== 0 || this.dragScale !== 1) {
+            this.dragY = 0
+            this.dragScale = 1
+            this.onDragProgress(0)
+          }
           this.pinchStartScale = this.imgScale
           this.pinchStartOffsetX = this.offsetX
           this.pinchStartOffsetY = this.offsetY
-          this.pinchStartCenterX = event.pinchCenterX
-          this.pinchStartCenterY = event.pinchCenterY
+          this.pinchStartCenterX = event.pinchCenterX - this.areaW / 2
+          this.pinchStartCenterY = event.pinchCenterY - this.areaH / 2
         })
         .onActionUpdate((event: GestureEvent) => {
-          if (event.scale <= 0) return
+          if (this.gestureOwner !== 'pinch' || event.scale <= 0) {
+            return
+          }
           const newScale = this.clampBound(this.pinchStartScale * event.scale, MIN_SCALE, MAX_SCALE)
-          // 以双指中心为焦点缩放保持焦点下内容点不动，并叠加双指中心的位移（捏合中拖动双指跟手）
-          const fx = event.pinchCenterX - this.areaW / 2
-          const fy = event.pinchCenterY - this.areaH / 2
+          // 标准粘指公式：捏合起始焦点下的内容点始终跟随双指中心（含中心移动），
+          // offset = C_now − (C0 − O0)·k；clamp 须用 newScale（用上一帧 scale 会逐帧漂移）
           const k = newScale / this.pinchStartScale
-          const targetX = fx - (fx - this.pinchStartOffsetX) * k + (event.pinchCenterX - this.pinchStartCenterX)
-          const targetY = fy - (fy - this.pinchStartOffsetY) * k + (event.pinchCenterY - this.pinchStartCenterY)
-          this.offsetX = this.clampOffset(targetX, true)
-          this.offsetY = this.clampOffset(targetY, false)
+          const cx = event.pinchCenterX - this.areaW / 2
+          const cy = event.pinchCenterY - this.areaH / 2
           this.imgScale = newScale
           if (newScale <= 1.001) {
             this.offsetX = 0
             this.offsetY = 0
+          } else {
+            this.offsetX = this.clampOffsetFor(cx - (this.pinchStartCenterX - this.pinchStartOffsetX) * k, true, newScale)
+            this.offsetY = this.clampOffsetFor(cy - (this.pinchStartCenterY - this.pinchStartOffsetY) * k, false, newScale)
           }
           this.syncPanDirection()
-          this.onZoomChanged(newScale > 1.01)
+          if (newScale > 1.01) {
+            this.reportZoom(true)
+          }
         })
         .onActionEnd((_event: GestureEvent) => {
-          if (this.imgScale <= 1.001) {
+          if (this.gestureOwner === 'pinch') {
+            this.gestureOwner = ''
+          }
+          if (this.imgScale <= 1.2) {
+            // 接近/低于 1x 时回弹归位，避免残留微小缩放
             this.getUIContext().animateTo({ duration: 250, curve: curves.springMotion(0.42, 0.8) }, () => {
               this.imgScale = 1
               this.offsetX = 0
               this.offsetY = 0
             })
             this.syncPanDirection()
-            this.onZoomChanged(false)
-          } else if (this.imgScale < 1.2) {
-            // 接近 1x 时回弹归位，避免残留微小缩放
-            this.getUIContext().animateTo({ duration: 250, curve: curves.springMotion(0.42, 0.8) }, () => {
-              this.imgScale = 1
-              this.offsetX = 0
-              this.offsetY = 0
-            })
-            this.syncPanDirection()
-            this.onZoomChanged(false)
+            this.reportZoom(false)
           }
         }),
       // 未放大时仅接管纵向手势（下拉关闭），横向让给 Swiper 翻页；放大后全向接管自由拖动
       PanGesture(this.panOption)
         .onActionStart((_event: GestureEvent) => {
-          this.pinchStartOffsetX = this.offsetX
-          this.pinchStartOffsetY = this.offsetY
+          if (this.gestureOwner !== '') {
+            return // pinch 已接管（judge 通常已拦截，此处兜底）
+          }
+          this.gestureOwner = 'pan'
+          this.panSuperseded = false
+          this.seqHadGesture = true
           this.panStartOffsetX = this.offsetX
           this.panStartOffsetY = this.offsetY
           this.panTargetX = this.offsetX
         })
         .onActionUpdate((event: GestureEvent) => {
+          if (this.gestureOwner !== 'pan' || this.panSuperseded) {
+            return
+          }
+          // 拖动中落下第二指：冻结等待 pinch 接管（judge 已在识别期拦截，此处兜底）
+          if (this.touchCount >= 2) {
+            return
+          }
           if (this.imgScale > 1.01) {
             // 放大态：自由拖动并限制边界，panTargetX 保留未 clamp 的目标位移
             this.panTargetX = this.panStartOffsetX + event.offsetX
@@ -234,6 +307,14 @@ struct ZoomableImage {
           }
         })
         .onActionEnd((_event: GestureEvent) => {
+          const superseded = this.panSuperseded
+          if (this.gestureOwner === 'pan') {
+            this.gestureOwner = ''
+          }
+          this.panSuperseded = false
+          if (superseded) {
+            return // 被 pinch 接管过：本次拖动不再判定翻页/关闭
+          }
           if (this.imgScale > 1.01) {
             // 放大态：图片顶在边界后继续拖动的溢出量超过阈值松手 → 作品内翻页
             const overflow = this.panTargetX - this.offsetX
@@ -284,6 +365,8 @@ export struct PixivImageViewer {
   @Local shareBounce: number = 0;
 
   private swiperController: SwiperController = new SwiperController();
+  // Swiper 容器当前落指数：判定回调据此在双指期间拒绝内置翻页手势
+  private swiperTouchCount: number = 0;
 
   // 事件：关闭查看器
   @Event onClose: () => void = () => {};
@@ -376,6 +459,20 @@ export struct PixivImageViewer {
       })
       .width('100%')
       .height('100%')
+      .onTouch((event: TouchEvent) => {
+        if (event.type === TouchType.Down) {
+          this.swiperTouchCount++
+        } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+          this.swiperTouchCount = Math.max(0, this.swiperTouchCount - 1)
+        }
+      })
+      // 1x 双指横滑时拒绝 Swiper 内置翻页手势，让位图片捏合缩放（子组件 judge 的对侧补强）
+      .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent) => {
+        if (gestureInfo.type === GestureControl.GestureType.PAN_GESTURE && this.swiperTouchCount >= 2) {
+          return GestureJudgeResult.REJECT
+        }
+        return GestureJudgeResult.CONTINUE
+      })
 
       // 顶栏 + 底部工具栏覆盖层（不拦截图片区点击）
       Column() {

@@ -13,6 +13,8 @@ export struct NovelListView {
   @Param novelList: PixivNovel[] = []
   @Param contentEndOffset: number = 0
   @Param nestedScroll: NestedScrollOptions | undefined = undefined
+  /** 最小高度：内容较短时补齐视口剩余空间，避免外层列表滚动位置回钳（嵌套滚动场景） */
+  @Param minHeight: number = 0
   @Event onItemClick: (novel: PixivNovel) => void
   @Event onReachEnd: () => void
 
@@ -26,6 +28,7 @@ export struct NovelListView {
     }
     .width('100%')
     .layoutWeight(1)
+    .constraintSize({ minHeight: this.minHeight })
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
     .nestedScroll(this.nestedScroll)

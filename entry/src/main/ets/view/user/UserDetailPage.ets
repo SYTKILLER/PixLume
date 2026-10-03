@@ -32,6 +32,15 @@ struct UserDetail {
     { text: $r('app.string.details') },
   ]);
 
+  /**
+   * 详情/小说等内容较短的 Tab 的最小高度：
+   * 补齐「分段按钮行以下」的视口剩余空间（窗口高 - 状态栏 - 标题栏60 - 分段按钮行及边距约70），
+   * 保证从插画 Tab 深滚动位置切过来时外层 List 滚动位置不被回钳，头部（头像）不跳动。
+   */
+  private get shortTabContentMinHeight(): number {
+    return PixState.windowHeight - PixState.topRectHeight - 130
+  }
+
   build() {
     NaviContainer({
       title: this.uDV.userData?.user.name,
@@ -89,6 +98,7 @@ struct UserDetail {
             // 小说
             NovelListView({
               novelList: this.uDV.userNovels,
+              minHeight: this.shortTabContentMinHeight,
               onReachEnd: () => {
                 this.uDV.loadMoreCurrentData()
               }
@@ -102,7 +112,6 @@ struct UserDetail {
       }
     }
     .backgroundColor($r('sys.color.background_primary'))
-    .contentStartOffset(PixState.topRectHeight + 56)
     .edgeEffect(EdgeEffect.Spring)
     .width('100%').height('100%')
     .align(Alignment.TopStart)
@@ -370,6 +379,9 @@ struct UserDetail {
     }
     .width('100%')
     .borderRadius(12)
+    .constraintSize({ minHeight: this.shortTabContentMinHeight })
+    // 底部留白：避开手势条并留出边距，滚动到底时最后一行不贴屏幕底边
+    .padding({ bottom: PixState.bottomRectHeight + PixState.PageMarginValue })
     .margin({ left: PixState.PageMarginValue, right: PixState.PageMarginValue })
   }
 
