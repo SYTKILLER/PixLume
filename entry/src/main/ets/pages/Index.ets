@@ -18,6 +18,8 @@ import UIConstants from '../common/constants/UIConstants';
 import { More } from './More';
 import { createLogger } from '../common/utils/Logger';
 import { appSettings, UISettings } from '../common/entity/SettingsModel';
+import { EventHub, EventKey } from '../common/utils/EventHub';
+import { DetailPageParams } from '../common/entity/DetailEntity';
 import { motion } from '@kit.MultimodalAwarenessKit';
 import { HoldingHandleUtil } from '../common/utils/HoldingHandleUtil';
 
@@ -57,6 +59,12 @@ struct Index {
 
   aboutToAppear() {
     logger.debug('Page aboutToAppear');
+    // 冷启动：卡片 router 事件在 onCreate 已登记 pendingDeepLink，登录态就绪后消费
+    this.consumePendingDeepLink()
+    // 热启动：onNewWant 通过事件通知已挂载的 Index 补跳
+    EventHub.on(EventKey.DeepLink, () => {
+      this.consumePendingDeepLink()
+    })
     // 启动适人握持
     HoldingHandleUtil.start((status: motion.HoldingHandStatus) => {
       this.handleHoldingStatusChange(status);
@@ -64,6 +72,19 @@ struct Index {
     // 从页面上下文读取避让区：Ability 侧过早调用 getWindowAvoidArea 会静默失败（1300002），
     // 页面就绪后读值才可靠，并监听变化持续更新（写入 PixState 供 HdsTabs 与各页面消费）
     this.initAvoidInsets()
+  }
+
+  /** 消费卡片点击的待跳转目标（幂等；未登录时保留，登录后由 Navigation 挂载触发补跳） */
+  private consumePendingDeepLink(): void {
+    const link = PixState.pendingDeepLink
+    if (!link || !PixState.isLoggedIn) return
+    PixState.pendingDeepLink = null
+    try {
+      PixState.pageStack.pushPathByName(link.route, { id: link.id } as DetailPageParams, true)
+      logger.info('DeepLink', `consumed: ${link.route}#${link.id}`)
+    } catch (e) {
+      logger.error('DeepLink', `push failed: ${JSON.stringify(e)}`)
+    }
   }
 
   aboutToDisappear(): void {
@@ -135,6 +156,10 @@ struct Index {
     }
     .height('100%')
     .width('100%')
+    // 登录成功（含卡片点击后未登录补登录）时 Navigation 内容挂载，补跳暂存的目标
+    .onAppear(() => {
+      this.consumePendingDeepLink()
+    })
   }
 
   @Builder

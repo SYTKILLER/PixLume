@@ -201,6 +201,10 @@
       "value": "账户信息"
     },
     {
+      "name": "switch_account",
+      "value": "切换账号"
+    },
+    {
       "name": "history",
       "value": "历史记录"
     },
@@ -215,6 +219,10 @@
     {
       "name": "keyword_manage",
       "value": "关键词管理"
+    },
+    {
+      "name": "keyword_data",
+      "value": "关键词数据"
     },
     {
       "name": "app_data",
@@ -1047,6 +1055,46 @@
     {
       "name": "direct_connect_on",
       "value": "开启"
+    },
+    {
+      "name": "PixCardFormAbility_desc",
+      "value": "PixLume 桌面卡片"
+    },
+    {
+      "name": "widget_display_name",
+      "value": "灵感图卡"
+    },
+    {
+      "name": "widget_desc",
+      "value": "展示 Pixiv 排行、动态、推荐的随机作品"
+    },
+    {
+      "name": "widget_settings",
+      "value": "桌面卡片"
+    },
+    {
+      "name": "card_image_source",
+      "value": "卡片图片来源"
+    },
+    {
+      "name": "card_source_recommend",
+      "value": "推荐"
+    },
+    {
+      "name": "card_source_follow",
+      "value": "动态"
+    },
+    {
+      "name": "widget_need_login",
+      "value": "请先登录后使用卡片"
+    },
+    {
+      "name": "widget_empty",
+      "value": "点击刷新获取图片"
+    },
+    {
+      "name": "widget_refresh_failed",
+      "value": "刷新失败，点击重试"
     }
   ]
 }

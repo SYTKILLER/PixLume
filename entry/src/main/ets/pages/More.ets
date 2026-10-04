@@ -34,6 +34,17 @@ export struct More {
           this.pushTo('account_info')
         }
       }),
+      // 切换账号
+      new CustomItemInfo({
+        symbol: $r('sys.symbol.arrow_2_circlepath'),
+        iconBg: '#AF52DE',
+        title: $r('app.string.switch_account'),
+        type: ItemActionType.ROUTER_BLANK,
+        id: 'switch_account',
+        onChange: () => {
+          this.pushTo('user_accounts')
+        }
+      }),
       // 数据
       new CustomItemInfo({ id: 'data', title: $r('app.string.data'), type: ItemActionType.GROUP }),
       // 历史记录
@@ -201,7 +212,7 @@ export struct More {
   @Builder
   UserProfileHeader() {
     Row({ space: 16 }) {
-      // 头像
+      // 头像（点击行为由卡片整体接管，见下方卡片 onClick）
       Stack() {
         PixivImageComponent({
           imageUrl: moreVM.avatarUrl,
@@ -209,15 +220,6 @@ export struct More {
           imageHeight: 64,
           imageBorder: { radius: 32 } // 圆形
         })
-          .hitTestBehavior(HitTestMode.Block)
-          .onClick(() => {
-            if (moreVM.currentUser) {
-              const params: UserDetailParams = { id: moreVM.currentUser.id };
-              this.pushTo('user_detail', params)
-            } else {
-              toastUtil.showToast({ message: '请先登录' });
-            }
-          })
         // 如果未登录，画个半透明遮罩提示点击
         if (!moreVM.isLogin) {
           Text($r('app.string.login'))
@@ -269,7 +271,13 @@ export struct More {
       offsetY: 2
     })
     .onClick(() => {
-      this.pushTo('user_accounts')
+      // 用户卡片 = 个人主页入口（与作者主页共用 user_detail 页）
+      if (moreVM.currentUser) {
+        const params: UserDetailParams = { id: moreVM.currentUser.id };
+        this.pushTo('user_detail', params)
+      } else {
+        toastUtil.showToast({ message: '请先登录' });
+      }
     })
   }
 

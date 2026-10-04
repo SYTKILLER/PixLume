@@ -24,6 +24,7 @@ struct AppData {
     const illustHistoryStr = ResourceUtils.getString($r('app.string.browse_records'));
     const searchHistoryStr = ResourceUtils.getString($r('app.string.search_records'));
     const downloadHistoryStr = ResourceUtils.getString($r('app.string.download_records'));
+    const keywordDataStr = ResourceUtils.getString($r('app.string.keyword_data'));
     const settingsStr = ResourceUtils.getString($r('app.string.preference'));
 
     const importConfirmStr = ResourceUtils.getString($r('app.string.import_confirm'));
@@ -98,6 +99,30 @@ struct AppData {
             title: importConfirmStr,
             message: `${overridePrefix}${downloadHistoryStr}${overrideSuffix}`,
             primaryButton: { value: importStr, action: () => appDataVM.importDownloadRecords() },
+            secondaryButton: { value: $r('app.string.cancel'), action: () => {} }
+          });
+        }
+      }),
+
+      // 关键词数据（收藏/屏蔽）
+      new CustomItemInfo({ id: 'keyword_data', title: $r('app.string.keyword_data'), type: ItemActionType.GROUP }),
+      new CustomItemInfo({
+        symbol: $r('sys.symbol.doc_text_badge_arrow_up'),
+        title: `${exportStr}${keywordDataStr}`,
+        type: ItemActionType.ROUTER,
+        id: 'export_kw',
+        onChange: () => { appDataVM.exportKeywords() }
+      }),
+      new CustomItemInfo({
+        symbol: $r('sys.symbol.arrow_down_layer'),
+        title: `${importStr}${keywordDataStr}`,
+        type: ItemActionType.ROUTER,
+        id: 'import_kw',
+        onChange: () => {
+          toastUtil.showAlertDialog({
+            title: importConfirmStr,
+            message: `${overridePrefix}${keywordDataStr}${overrideSuffix}`,
+            primaryButton: { value: importStr, action: () => appDataVM.importKeywords() },
             secondaryButton: { value: $r('app.string.cancel'), action: () => {} }
           });
         }

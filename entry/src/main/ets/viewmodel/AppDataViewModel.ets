@@ -11,6 +11,8 @@ import { AppSettings, appSettings } from '../common/entity/SettingsModel';
 import IllustHistoryInfo from '../common/entity/IllustHistoryInfo';
 import SearchHistoryInfo from '../common/entity/SearchHistoryInfo';
 import DownloadRecordInfo from '../common/entity/DownloadRecordInfo';
+import TagCollectionInfo from '../common/entity/TagCollectionInfo';
+import { tagCollectionService } from '../common/utils/TagCollectionService';
 import { util } from '@kit.ArkTS';
 
 const logger = createLogger('AppDataViewModel');
@@ -20,6 +22,7 @@ interface ImportDataStructure {
   illustHistory?: Array<IllustHistoryInfo>;
   searchHistory?: Array<SearchHistoryInfo>;
   downloadRecords?: Array<DownloadRecordInfo>;
+  keywords?: Array<TagCollectionInfo>;
   settings?: AppSettings;
 }
 
@@ -221,6 +224,28 @@ export class AppDataViewModel {
         insertCount++;
       }
       toastUtil.showToast({ message: `导入完成：新增 ${insertCount} 条，跳过${skipCount} 条重复` });
+    } else {
+      toastUtil.showToast({ message: '文件格式不正确' });
+    }
+  }
+
+  // 关键词数据（收藏/屏蔽）
+  async exportKeywords() {
+    await tagCollectionService.ready();
+    // 浅拷贝一份再导出，避免直接序列化服务的内部缓存数组
+    const data = tagCollectionService.getRecords().map((r): TagCollectionInfo => {
+      const item = new TagCollectionInfo(r.name, r.type, r.translatedName);
+      item.createTime = r.createTime;
+      return item;
+    });
+    await this.saveFile({ keywords: data } as Partial<ImportDataStructure>, `PixLume_关键词数据_${this.getDateStr()}.json`);
+  }
+
+  async importKeywords() {
+    const data = await this.pickAndReadFile();
+    if (data?.keywords && Array.isArray(data.keywords)) {
+      const summary = await tagCollectionService.importRecords(data.keywords);
+      toastUtil.showToast({ message: `导入完成：新增 ${summary.added} 条，更新 ${summary.updated} 条` });
     } else {
       toastUtil.showToast({ message: '文件格式不正确' });
     }

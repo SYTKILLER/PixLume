@@ -13,6 +13,12 @@ const logger = createLogger('PixivState')
 /** HdsTabs 悬浮页签栏自身高度（悬浮样式官方默认值 56vp），手机端见 Index.ets 的 barFloatingStyle */
 const FLOATING_BAR_HEIGHT = 56
 
+/** 桌面卡片点击带来的待消费跳转（未登录时暂存，登录成功后自动补跳） */
+export interface PendingDeepLink {
+  route: string
+  id: number
+}
+
 
 @ObservedV2
 export class _PixState {
@@ -33,7 +39,10 @@ export class _PixState {
   // 是否登录过
   @Trace isLoggedIn: boolean = false
 
-  public static appVersion: string = '1.0.0'
+  public static appVersion: string = '1.2.0'
+
+  // 卡片 router 事件解析出的待跳转目标（Index 在 Navigation 就绪且已登录时消费）
+  @Trace pendingDeepLink: PendingDeepLink | null = null
 
   // 窗口对象
   public static UIContext: UIContext

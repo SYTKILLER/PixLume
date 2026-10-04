@@ -74,6 +74,19 @@
             "resource": "$profile:backup_config"
           }
         ],
+      },
+      {
+        "name": "PixCardFormAbility",
+        "srcEntry": "./ets/formability/PixCardFormAbility.ets",
+        "description": "$string:PixCardFormAbility_desc",
+        "type": "form",
+        "exported": true,
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:form_config"
+          }
+        ],
       }
     ]
   }

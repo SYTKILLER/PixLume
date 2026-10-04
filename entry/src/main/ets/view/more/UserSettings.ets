@@ -5,11 +5,13 @@ import { CustomItemInfo, ItemActionType,
   MenuOption } from "../../common/entity/CusItemInfo"
 import { appSettings, UISettings } from "../../common/entity/SettingsModel"
 import { networkModeManager } from "../../common/utils/network/NetworkModeManager"
+import { requestWidgetRefresh } from "../../common/utils/widget/WidgetService"
 import { SettingsUtils } from "../../common/utils/SettingsUtils"
 import { toastUtil } from "../../common/utils/ToastUtils"
 import { CustomListItem } from "../../components/CusItemBuilder"
 import { NaviContainer } from "../../components/NaviContainer"
 import { PixState } from "../../entryability/AppState"
+import { common } from "@kit.AbilityKit"
 
 
 @Builder
@@ -34,6 +36,25 @@ struct UserSettings {
       new MenuOption('3', $r('app.string.search'), $r('sys.symbol.curve_magnifyingglass')),
       new MenuOption('4', $r('app.string.more'), $r('sys.symbol.square_grid_2x2'))
     )
+    return options
+  }
+
+  // 卡片图片来源选项：跟随排行页显示（当前插画/小说模式下用户勾选的榜单）+ 动态 + 推荐
+  private cardSourceMenuOptions(): MenuOption[] {
+    const options: MenuOption[] = [
+      new MenuOption('recommend', $r('app.string.card_source_recommend')),
+      new MenuOption('follow', $r('app.string.card_source_follow'))
+    ]
+    const novelMode = appSettings.novel_mode
+    const modesTable = novelMode ? FunctionConstants.NOVEL_RANK_MODES : FunctionConstants.ILLUST_RANK_MODES
+    const modes = novelMode
+      ? (appSettings.novel_rank_modes.length > 0 ? appSettings.novel_rank_modes : Object.keys(modesTable))
+      : (appSettings.rank_modes.length > 0 ? appSettings.rank_modes : Object.keys(modesTable))
+    for (const key of modes) {
+      // 与排行页编辑面板同规则：未开启"不可以瑟瑟"反向开关时不展示 R-18 榜单
+      if (!appSettings.show_H && key.includes('r18')) continue
+      options.push(new MenuOption(`rank:${key}`, modesTable[key] ?? key))
+    }
     return options
   }
 
@@ -270,6 +291,23 @@ struct UserSettings {
         onChange: (value) => {
           appSettings.collecting_when_download = value as boolean
           appSettings.save()
+        }
+      }),
+      // 桌面卡片
+      new CustomItemInfo({ id: 'widget', title: $r('app.string.widget_settings'), type: ItemActionType.GROUP }),
+      new CustomItemInfo({
+        symbol: $r('sys.symbol.square_grid_2x2'),
+        iconBg: '#FF2D55',
+        title: $r('app.string.card_image_source'),
+        type: ItemActionType.MENU,
+        id: 'card_image_source',
+        value: appSettings.card_image_source,
+        menuOptions: this.cardSourceMenuOptions(),
+        onChange: (value) => {
+          appSettings.card_image_source = value as string
+          appSettings.save()
+          // 改源立即换图：批量触发卡片进程重取
+          requestWidgetRefresh(this.getUIContext().getHostContext() as common.UIAbilityContext)
         }
       }),
     ]

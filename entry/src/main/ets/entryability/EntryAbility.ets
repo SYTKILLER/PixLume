@@ -29,6 +29,7 @@ import { searchVM } from '../viewmodel/SearchViewModel';
 import { tagCollectionService } from '../common/utils/TagCollectionService';
 import { networkModeManager } from '../common/utils/network/NetworkModeManager';
 import { rcpAdapter } from '../common/utils/network/RcpAxiosAdapter';
+import { requestWidgetRefresh } from '../common/utils/widget/WidgetService';
 import axios from '@ohos/axios';
 
 const logger = createLogger('EntryAbility')
@@ -47,6 +48,7 @@ export default class EntryAbility extends UIAbility {
 
   // --- 生命周期 ---
   async onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): Promise<void> {
+    this.handleCardRouterWant(want)
     try {
       await this.initAppEnvironment();
       await this.initAppStateAndAuth();
@@ -54,6 +56,11 @@ export default class EntryAbility extends UIAbility {
     } catch (error) {
       logger.error(`Init`, `Initialization failed, ${error}`);
     }
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    // 卡片 router 热启：解析目标并存入 pendingDeepLink，通知已挂载的 Index 消费
+    this.handleCardRouterWant(want)
   }
 
   onDestroy(): void {
@@ -116,6 +123,8 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageDestroy(): void {
     logger.info('Lifecycle', 'EntryAbility onWindowStageDestroy');
+    // 最近任务划掉等不经过 onBackground 的销毁路径，同样补一次卡片刷新
+    this.kickWidgetRefresh()
   }
 
   onForeground(): void {
@@ -124,6 +133,42 @@ export default class EntryAbility extends UIAbility {
 
   onBackground(): void {
     logger.info('Lifecycle', 'EntryAbility onBackground');
+    // "每次退出应用时刷新卡片"：reloadForms 只是毫秒级 IPC，
+    // 由系统拉起卡片进程自取新图，主进程随后被回收不影响
+    this.kickWidgetRefresh()
+  }
+
+  // --- 桌面卡片 ---
+  private lastWidgetKick: number = 0
+
+  /** 退出刷新去抖：返回键退出会先 onBackground 再 onWindowStageDestroy，只触发一次 */
+  private kickWidgetRefresh(): void {
+    const now = Date.now()
+    if (now - this.lastWidgetKick < 10000) return
+    this.lastWidgetKick = now
+    requestWidgetRefresh(this.context)
+  }
+
+  /** 解析卡片 router 事件参数（params 为 JSON 字符串），登记待消费跳转 */
+  private handleCardRouterWant(want: Want): void {
+    try {
+      const raw = want.parameters?.['params']
+      let p: Record<string, Object> | null = null
+      if (typeof raw === 'string') {
+        p = JSON.parse(raw) as Record<string, Object>
+      } else if (raw) {
+        p = raw as Record<string, Object>
+      }
+      const target = p?.['target'] as string
+      const id = Number(p?.['id'])
+      if (p && (target === 'illust_detail' || target === 'novel_detail') && id > 0) {
+        PixState.pendingDeepLink = { route: target, id: id }
+        EventHub.sendEvent(EventKey.DeepLink)
+        logger.info('CardRouterWant', `${target}#${id}`)
+      }
+    } catch (e) {
+      logger.warn('CardRouterWant', `parse failed: ${JSON.stringify(e)}`)
+    }
   }
 
   // --- 核心初始化 ---

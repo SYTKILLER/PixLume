@@ -25,6 +25,7 @@ import { toastUtil } from "../common/utils/ToastUtils";
 import { tagCollectionVM } from "../viewmodel/TagCollectionVM";
 import { EmptyStateView } from "../components/CommonWidgets";
 import { SymbolGlyphModifier } from "@kit.ArkUI";
+import { ShareUtil } from "../common/utils/ShareUtil";
 
 const logger = createLogger('IllustDetail')
 
@@ -54,6 +55,8 @@ struct IllustDetail {
   private initialSwiperIndex: number = 0
   // 子页上报过的标题缓存：上报时若不是当前页则先缓存，切到该页时再套用
   private titleCache: Map<number, string> = new Map()
+  // 子页上报过的详情缓存（含 Swiper 预载页）：分享按钮按当前页 id 取用
+  private detailCache: Map<number, PixivIllust> = new Map()
   private sharedId: string = ''
   private longTakeAnimationProperties: LongTakeAnimationProperties = new LongTakeAnimationProperties();
   // 看图沉浸前保存的系统栏属性，退出时原样恢复（兼容深浅色模式）
@@ -87,6 +90,7 @@ struct IllustDetail {
       title: this.illustTitle,
       // 看图即沉浸：隐藏页面标题栏，让全屏查看器铺满窗口
       hideTitleBar: this.showLargeImage,
+      buttons: this.detailButtons(),
       content: () => { this.Content() },
       onReady: (ctx) => {
         this.pageStack = ctx.pathStack
@@ -105,6 +109,23 @@ struct IllustDetail {
         SnapShotUtils.clear();
       }
     })
+  }
+
+  /** 顶栏右上角：分享按钮（按「分享文本格式」模板渲染文本分享当前作品） */
+  private detailButtons(): NavigationMenuItem[] {
+    return [{
+      value: '分享',
+      symbolIcon: new SymbolGlyphModifier($r('sys.symbol.share')),
+      action: () => {
+        const detail = this.detailCache.get(this.currentDetailId());
+        if (detail) {
+          ShareUtil.shareIllustText(detail);
+        } else {
+          // 详情未就绪时兜底分享裸链接
+          ShareUtil.shareText(`链接：https://www.pixiv.net/artworks/${this.currentDetailId()}`);
+        }
+      }
+    }];
   }
 
   // 处理转场动画初始化
@@ -169,7 +190,8 @@ struct IllustDetail {
                 }
               },
               onViewerZoom: (zoomed) => { this.viewerZoomed = zoomed },
-              onTitle: (id: number, title: string) => { this.handleTitleReport(id, title) }
+              onTitle: (id: number, title: string) => { this.handleTitleReport(id, title) },
+              onDetail: (id: number, detail: PixivIllust) => { this.detailCache.set(id, detail) }
             })
           })
       }
@@ -206,7 +228,8 @@ struct IllustDetail {
             this.viewerZoomed = false
           }
         },
-        onTitle: (id: number, title: string) => { this.handleTitleReport(id, title) }
+        onTitle: (id: number, title: string) => { this.handleTitleReport(id, title) },
+        onDetail: (id: number, detail: PixivIllust) => { this.detailCache.set(id, detail) }
       })
         .width('100%')
         .height('100%')
@@ -289,6 +312,7 @@ struct IllustDetailContent {
   @Event onImageLarge: (show: boolean) => void
   @Event onViewerZoom: (zoomed: boolean) => void
   @Event onTitle: (illustId: number, title: string) => void
+  @Event onDetail: (illustId: number, detail: PixivIllust) => void
 
   async aboutToAppear(): Promise<void> {
     // 根据 ID 加载详情，完成后上报标题（外层判断是否为当前页再套用，不再依赖卡片可见性回调）
@@ -296,6 +320,7 @@ struct IllustDetailContent {
     const detail = this.iDV.detailData
     if (detail) {
       this.onTitle(this.illustId, detail.title)
+      this.onDetail(this.illustId, detail)
     }
     this.iDV.loadRelated(this.illustId);
   }
@@ -478,7 +503,9 @@ struct IllustDetailContent {
               this.iDV.bookmarkOrCancel(true)
             }
           },
-          onShare: (url, index) => {},
+          onShare: (url, index) => {
+            this.shareViewerImage(url, index)
+          },
           onBookmark: (index) => {
             this.iDV.bookmarkOrCancel(!this.iDV.isBookmarked)
           },
@@ -492,6 +519,18 @@ struct IllustDetailContent {
       }
     }
   }
+  }
+
+  /** 分享查看器当前图片：按查看画质取到沙箱缓存后以文件形式拉起分享面板 */
+  private shareViewerImage(url: string, index: number): void {
+    const detail = this.iDV.detailData;
+    if (!detail) return;
+    const dot = url.lastIndexOf('.');
+    const ext = dot >= 0 ? url.substring(dot) : '.jpg';
+    const cachePath = `${_PixState.Context.cacheDir}/share/${detail.id}_p${index}${ext}`;
+    const pageSuffix = detail.page_count > 1 ? ` P${index + 1}` : '';
+    ShareUtil.shareRemoteImage(url, cachePath, `${detail.title}${pageSuffix}`,
+      detail.user?.name ? `画师：${detail.user.name}` : undefined);
   }
 
   /**

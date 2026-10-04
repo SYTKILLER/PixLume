@@ -5,6 +5,8 @@ const logger = createLogger('EventHub')
 
 export enum EventKey {
   FetchData = 10000,
+  // 桌面卡片 router 事件带来的待消费跳转（onNewWant 热启时通知已挂载的 Index 消费）
+  DeepLink = 10001,
 }
 
 export class EventHub {

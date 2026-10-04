@@ -89,6 +89,8 @@ export class AppSettings {
   @Trace novel_mode: boolean = false
   // 直连模式：auto=启动探测自动切换 / off=关闭 / on=开启
   @Trace direct_connect_mode: string = 'auto'
+  // 桌面卡片图片来源：recommend=推荐 / follow=动态 / rank:<mode>=排行页榜单
+  @Trace card_image_source: string = 'recommend'
 
   constructor() {}
 
@@ -115,6 +117,7 @@ export class AppSettings {
       this.show_thumbnail = (json["show_thumbnail"] as boolean) ?? this.show_thumbnail;
       this.novel_mode = (json["novel_mode"] as boolean) ?? this.novel_mode;
       this.direct_connect_mode = (json["direct_connect_mode"] as string) ?? this.direct_connect_mode;
+      this.card_image_source = (json["card_image_source"] as string) ?? this.card_image_source;
 
       console.info("[AppSettings] App配置加载成功");
     } catch (e) {
@@ -142,7 +145,8 @@ export class AppSettings {
         "swiper_browsing": this.swiper_browsing,
         "show_thumbnail": this.show_thumbnail,
         "novel_mode": this.novel_mode,
-        "direct_connect_mode": this.direct_connect_mode
+        "direct_connect_mode": this.direct_connect_mode,
+        "card_image_source": this.card_image_source
       };
       const jsonStr: string = JSON.stringify(data);
       await preferenceUtil.put(AppConstants.KEY_APP_SETTINGS, jsonStr);
@@ -171,6 +175,7 @@ export class AppSettings {
       this.show_thumbnail = false;
       this.novel_mode = false
       this.direct_connect_mode = 'auto'
+      this.card_image_source = 'recommend'
 
       this.save()
       console.info("[AppSettings] App配置已恢复默认");

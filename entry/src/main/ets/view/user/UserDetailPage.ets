@@ -7,6 +7,8 @@ import { DetailPageParams } from "../../common/entity/DetailEntity"; // 用于�
 import { WaterFlowView } from "../../components/WaterFlowView";
 import { NovelListView } from "../../components/NovelListView";
 import { NaviContainer } from "../../components/NaviContainer";
+import { ShareUtil } from "../../common/utils/ShareUtil";
+import { toastUtil } from "../../common/utils/ToastUtils";
 
 
 @Builder
@@ -23,7 +25,11 @@ struct UserDetail {
   @Local contentScrolled: boolean = false;
   // 关注按钮长按菜单
   @Local showFollowMenu: boolean = false;
+  // 是否本人主页（个人主页复用本页）：隐藏关注按钮
+  @Local isSelf: boolean = false;
   @Local uDV: UserDetailViewModel =  new UserDetailViewModel()
+  // 路由参数兜底的用户 id：详情未加载完成时分享用
+  private authorId: number = 0;
 
   private tabItems: SegmentButtonV2Items = new SegmentButtonV2Items([
     { text: $r('app.string.illust') },
@@ -41,15 +47,35 @@ struct UserDetail {
     return PixState.windowHeight - PixState.topRectHeight - 130
   }
 
+  /** 顶栏右上角：分享按钮（画师主页链接文本分享） */
+  private navButtons(): NavigationMenuItem[] {
+    return [{
+      value: '分享',
+      symbolIcon: new SymbolGlyphModifier($r('sys.symbol.share')),
+      action: () => {
+        const user = this.uDV.userData?.user ?? this.uDV.preUserData;
+        const userId = user?.id ?? this.authorId;
+        if (!userId) {
+          toastUtil.showToast({ message: '作者信息未加载，请稍后重试' });
+          return;
+        }
+        ShareUtil.shareUserText(userId, user?.name ?? '');
+      }
+    }];
+  }
+
   build() {
     NaviContainer({
       title: this.uDV.userData?.user.name,
       contentScrolled: this.contentScrolled,
+      buttons: this.navButtons(),
       content: () => {
         this.Content()
       },
       onReady: (ctx: NavDestinationContext) => {
         const params: UserDetailParams = ctx?.pathInfo?.param as UserDetailParams
+        this.isSelf = !!params && PixState.currentUser?.id === params.id
+        this.authorId = params?.id ?? 0
         this.uDV.onReady(ctx, params)
       }
     })
@@ -242,31 +268,33 @@ struct UserDetail {
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .margin({ top: 4 })
-        // 关注按钮（三态：关注 / 已关注 / 私密关注；点击默认公开关注或取消，长按弹出切换菜单）
-        Button(this.uDV.isFollow ? (this.uDV.isFollowPrivate ? $r('app.string.follow_private') : $r('app.string.followed')) : $r('app.string.follow'))
-          .backgroundColor(this.uDV.isFollow ? $r('sys.color.comp_background_tertiary') : $r('app.color.brand'))
-          .fontColor(this.uDV.isFollow ? $r('sys.color.font_primary') : Color.White)
-          .padding({ left: 24, right: 24 })
-          .type(ButtonType.Normal)
-          .fontSize(14)
-          .height(36)
-          .borderRadius(18)
-          .onClick(() => {
-            this.uDV.setFollowState(this.uDV.isFollow ? 'unfollow' : 'follow_public')
-          })
-          .gesture(
-            LongPressGesture({ repeat: false, duration: 400 })
-              .onAction(() => {
-                this.showFollowMenu = true
-              })
-          )
-          .bindMenu(this.showFollowMenu, this.FollowMenu(), {
-            placement: Placement.Bottom,
-            backgroundBlurStyle: BlurStyle.Thin,
-            onDisappear: () => {
-              this.showFollowMenu = false
-            }
-          })
+        // 关注按钮（三态：关注 / 已关注 / 私密关注；点击默认公开关注或取消，长按弹出切换菜单；本人主页隐藏）
+        if (!this.isSelf) {
+          Button(this.uDV.isFollow ? (this.uDV.isFollowPrivate ? $r('app.string.follow_private') : $r('app.string.followed')) : $r('app.string.follow'))
+            .backgroundColor(this.uDV.isFollow ? $r('sys.color.comp_background_tertiary') : $r('app.color.brand'))
+            .fontColor(this.uDV.isFollow ? $r('sys.color.font_primary') : Color.White)
+            .padding({ left: 24, right: 24 })
+            .type(ButtonType.Normal)
+            .fontSize(14)
+            .height(36)
+            .borderRadius(18)
+            .onClick(() => {
+              this.uDV.setFollowState(this.uDV.isFollow ? 'unfollow' : 'follow_public')
+            })
+            .gesture(
+              LongPressGesture({ repeat: false, duration: 400 })
+                .onAction(() => {
+                  this.showFollowMenu = true
+                })
+            )
+            .bindMenu(this.showFollowMenu, this.FollowMenu(), {
+              placement: Placement.Bottom,
+              backgroundBlurStyle: BlurStyle.Thin,
+              onDisappear: () => {
+                this.showFollowMenu = false
+              }
+            })
+        }
         // 统计数据
         Row() {
           Column({ space: 4 }) {

@@ -27,6 +27,16 @@ export interface TagAddOutcome {
 
 export type TagChangeListener = () => void;
 
+/** 批量导入结果汇总 */
+export interface TagImportSummary {
+  /** 新增条数 */
+  added: number;
+  /** 更新条数（译文回填 + 收藏/屏蔽互斥转移） */
+  updated: number;
+  /** 无效或重复跳过条数 */
+  skipped: number;
+}
+
 /**
  * 关键词收藏/屏蔽服务：
  * 持有全量内存缓存（Set 匹配，避免逐条查库），由 EntryAbility 启动时 init，
@@ -184,6 +194,70 @@ export class TagCollectionService {
     } catch (e) {
       logger.error(`removeBlockedNames failed: ${JSON.stringify(e)}`);
     }
+  }
+
+  /**
+   * 批量导入关键词（应用数据导入用）。
+   * 合并语义：同名同类型已存在时仅回填缺失译文；同名但在另一侧时按互斥语义
+   * 转移到导入侧（与手动添加行为一致）；其余新增并保留原收录时间。
+   * 结束后统一 reload + notify，屏蔽过滤与管理页立即生效。
+   */
+  async importRecords(items: TagCollectionInfo[]): Promise<TagImportSummary> {
+    const summary: TagImportSummary = { added: 0, updated: 0, skipped: 0 };
+    if (!items || items.length === 0) {
+      return summary;
+    }
+    await this.ready();
+    try {
+      if (!this.table) {
+        return summary;
+      }
+      for (const raw of items) {
+        if (!raw || typeof raw.name !== 'string') {
+          summary.skipped++;
+          continue;
+        }
+        const name = TagCollectionService.normalize(raw.name);
+        if (name.length === 0 || (raw.type !== TAG_TYPE_FAVORITE && raw.type !== TAG_TYPE_BLOCK)) {
+          summary.skipped++;
+          continue;
+        }
+        const translated = typeof raw.translatedName === 'string' ? raw.translatedName : '';
+        const createTime = (typeof raw.createTime === 'number' && raw.createTime > 0)
+          ? raw.createTime : new Date().getTime();
+
+        const localSame = this.records.find(r => r.name === name && r.type === raw.type);
+        if (localSame) {
+          // 已存在同类型：仅当本地缺译文而导入带译文时回填，其余跳过
+          if (!localSame.translatedName && translated) {
+            localSame.translatedName = translated;
+            await this.table.saveOrUpdate(localSame);
+            summary.updated++;
+          } else {
+            summary.skipped++;
+          }
+          continue;
+        }
+
+        const localOther = this.records.find(r => r.name === name && r.type !== raw.type);
+        if (localOther) {
+          // 收藏/屏蔽互斥：转移到导入侧
+          await this.table.deleteByNameAndType(name, localOther.type);
+        }
+        const record = new TagCollectionInfo(name, raw.type, translated || (localOther ? localOther.translatedName : ''));
+        record.createTime = createTime;
+        await this.table.saveOrUpdate(record);
+        if (localOther) {
+          summary.updated++;
+        } else {
+          summary.added++;
+        }
+      }
+      await this.reload();
+    } catch (e) {
+      logger.error(`importRecords failed: ${JSON.stringify(e)}`);
+    }
+    return summary;
   }
 
   /**

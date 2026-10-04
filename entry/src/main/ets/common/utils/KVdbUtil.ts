@@ -28,7 +28,9 @@ class KVdbUtil {
     try {
       this.kvManager = distributedKVStore.createKVManager(kvManagerConfig);
       console.info('Succeeded in creating KVManager.');
-      this.getKVStore()
+      // 必须等待 getKVStore 的 IPC 回调完成：否则调用方 await initKVManager 后
+      // 立即 getData 会撞上 kvStore 未就绪的竞态（卡片进程首现，主进程靠后续异步工作掩盖）
+      await this.getKVStore()
     } catch (e) {
       const error = e as BusinessError;
       console.error(`Failed to create KVManager. Code:${error.code},message:${error.message}`);
